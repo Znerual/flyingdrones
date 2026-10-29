@@ -4,6 +4,10 @@ Code release for the NeurIPS 2026 paper (Laurenz Ruzicka, Roman Pflugfelder, Dan
 
 Dataset: [https://www.kaggle.com/datasets/flyingdrones/flyingdrones/data](https://www.kaggle.com/datasets/flyingdrones/flyingdrones/data)
 
+![Example frames from the FlyingDrones dataset](assets/dataset_examples.jpg)
+
+*Two example frames. Left: rendered RGB image with bounding boxes around the drones. Middle: per-drone instance masks. Right: color visualization of the ground-truth optical flow.*
+
 ## Dataset convention
 
 ```

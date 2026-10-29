@@ -1,0 +1,52 @@
+res,rank,family,class,ckpt,tag,epe_drone,ci_lo,ci_hi,epe_all,epe_all_ci_lo,epe_all_ci_hi,tiled_1080
+480x270,1,arflow,E,KITTI12/pwclite_ar_mv,arflow__KITTI12-pwclite_ar_mv__480x270,0.872749,0.765692,0.988921,0.149526,0.142113,0.157485,0
+480x270,2,memflow,M,MemFlowNet_spring,memflow__MemFlowNet_spring__480x270,0.947592,0.847815,1.053301,0.303143,0.277213,0.331044,0
+480x270,3,unimatch,T,gmflow-scale2-regrefine6-mixdata-train320x576-4e7b215d,unimatch__gmflow-scale2-regrefine6-mixdata-train320x576-4e7b215d__480x270,0.952290,0.862595,1.047462,0.275175,0.253051,0.299009,0
+480x270,4,pyflow,P,fast,pyflow__fast__480x270,0.976745,0.845395,1.114902,0.318394,0.294673,0.343654,0
+480x270,5,videoflow,M,MOF_things_288960noise,videoflow__MOF_things_288960noise__480x270,0.996660,0.907746,1.091449,0.319301,0.293756,0.346756,0
+480x270,6,waft,C,tar-c-t-spring-540p,waft__tar-c-t-spring-540p__480x270,1.000447,0.894859,1.114125,0.297507,0.272148,0.324393,0
+480x270,7,vcn,P,vcn_weights/things/finetune_211999,vcn__vcn_weights-things-finetune_211999__480x270,1.066829,0.960848,1.179501,0.405047,0.379378,0.432525,0
+480x270,8,flowdiffusion,M,pipeline-900000,flowdiffusion__pipeline-900000__480x270,1.098816,1.000013,1.205872,0.325142,0.300043,0.351816,0
+480x270,9,flowformerplusplus,T,things,flowformerplusplus__things__480x270,1.108280,1.008939,1.212993,0.324866,0.298637,0.353154,0
+480x270,10,searaft,C,Tartan-C-T-TSKH432x960-M (sintel),searaft__sintel-Tartan-C-T-TSKH432x960-M__480x270,1.116863,1.016943,1.221080,0.306854,0.281079,0.334394,0
+480x270,11,raft,C,raft-things,raft__raft-things__480x270,1.151843,1.049368,1.261552,0.327217,0.300984,0.355055,0
+480x270,12,liteflownet3,P,liteflownet3-sintel,liteflownet3__liteflownet3-sintel__480x270,1.192014,1.079523,1.313627,0.368213,0.343128,0.394764,0
+480x270,13,flownet2,P,FlowNet2_checkpoint,flownet2__FlowNet2_checkpoint__480x270,1.209345,1.095064,1.330543,0.314101,0.289542,0.340044,0
+480x270,14,pwcnet,P,pwc_net_chairs,pwcnet__pwc_net_chairs__480x270,1.227050,1.114082,1.350857,0.432361,0.410276,0.455805,0
+480x270,15,gmflow,T,gmflow_with_refine_things-36579974,gmflow__gmflow_with_refine_things-36579974__480x270,1.281656,1.173937,1.394792,0.400606,0.380415,0.421841,0
+480x270,16,fastflownet,E,fastflownet_ft_kitti,fastflownet__fastflownet_ft_kitti__480x270,1.458761,1.324087,1.600338,0.477152,0.451857,0.503791,0
+480x270,ref,zeroflow,-,zero flow,zeroflow__zero_flow__480x270,1.744141,1.611303,1.885439,0.516232,0.492572,0.540113,0
+960x432,1,unimatch,T,gmflow-scale2-regrefine6-things-776ed612,unimatch__gmflow-scale2-regrefine6-things-776ed612__960x432,1.292861,1.179094,1.410536,0.570967,0.523097,0.622657,0
+960x432,2,videoflow,M,BOF_sintel,videoflow__BOF_sintel__960x432,1.425163,1.306407,1.547262,0.538331,0.492052,0.587915,0
+960x432,3,memflow,M,MemFlowNet_spring,memflow__MemFlowNet_spring__960x432,1.483916,1.315799,1.660913,0.553921,0.505997,0.606320,0
+960x432,4,flowformerplusplus,T,things_288960,flowformerplusplus__things_288960__960x432,1.513186,1.372560,1.660633,0.588068,0.539379,0.640166,0
+960x432,5,searaft,C,Tartan-C-T-TSKH432x960-M (sintel),searaft__sintel-Tartan-C-T-TSKH432x960-M__960x432,1.556548,1.402672,1.720884,0.549057,0.501859,0.600028,0
+960x432,6,arflow,E,KITTI12/pwclite_ar_mv,arflow__KITTI12-pwclite_ar_mv__960x432,1.581421,1.355538,1.824065,0.304279,0.271462,0.339726,0
+960x432,7,gmflow,T,gmflow_with_refine_sintel-3ed1cf48,gmflow__gmflow_with_refine_sintel-3ed1cf48__960x432,1.664734,1.523979,1.808625,0.648486,0.603203,0.697151,0
+960x432,8,raft,C,raft-sintel,raft__raft-sintel__960x432,1.713110,1.548669,1.885265,0.551399,0.504624,0.601739,0
+960x432,9,waft,C,tar-c-t-spring-540p,waft__tar-c-t-spring-540p__960x432,1.793232,1.579169,2.017399,0.526652,0.480542,0.575048,0
+960x432,10,pyflow,P,fast,pyflow__fast__960x432,1.894679,1.617447,2.195277,0.565981,0.520179,0.614732,0
+960x432,11,flownet2,P,FlowNet2-CS_checkpoint,flownet2__FlowNet2-CS_checkpoint__960x432,2.010578,1.810114,2.218753,0.675833,0.631235,0.723133,0
+960x432,12,vcn,P,vcn_weights/sintel-ft-trainval/finetune_67999,vcn__vcn_weights-sintel-ft-trainval-finetune_67999__960x432,2.047603,1.843526,2.261326,0.640992,0.567180,0.727106,0
+960x432,13,pwcnet,P,pwc_net_chairs,pwcnet__pwc_net_chairs__960x432,2.124508,1.909627,2.352222,0.672150,0.627653,0.719439,0
+960x432,14,liteflownet3,P,liteflownet3-sintel,liteflownet3__liteflownet3-sintel__960x432,2.147378,1.916639,2.388552,0.604646,0.558219,0.654661,0
+960x432,15,flowdiffusion,M,pipeline-305000,flowdiffusion__pipeline-305000__960x432,2.220261,2.001142,2.445921,0.610639,0.565656,0.657825,0
+960x432,16,fastflownet,E,fastflownet_things3d,fastflownet__fastflownet_things3d__960x432,2.335692,2.084577,2.596898,0.679525,0.633648,0.727887,0
+960x432,ref,zeroflow,-,zero flow,zeroflow__zero_flow__960x432,3.498110,3.226377,3.782688,0.973288,0.926072,1.021215,0
+1920x1080,1,unimatch,T,gmflow-scale2-regrefine6-sintelft-6e39e2b9,unimatch__gmflow-scale2-regrefine6-sintelft-6e39e2b9__1920x1080,1.557085,1.420349,1.704535,1.163323,1.060042,1.274697,1
+1920x1080,2,videoflow,M,BOF_sintel,videoflow__BOF_sintel__1920x1080,1.581754,1.453797,1.716810,1.160875,1.058315,1.271759,1
+1920x1080,3,flowformerplusplus,T,things_288960,flowformerplusplus__things_288960__1920x1080,1.840086,1.674496,2.015461,1.219242,1.114857,1.331844,1
+1920x1080,4,searaft,C,Tartan-C-T-TSKH432x960-M (sintel),searaft__sintel-Tartan-C-T-TSKH432x960-M__1920x1080,1.882925,1.703134,2.077508,1.171453,1.067319,1.283802,0
+1920x1080,5,memflow,M,MemFlowNet_T_sintel,memflow__MemFlowNet_T_sintel__1920x1080,1.964787,1.769422,2.178901,1.168355,1.064324,1.280253,1
+1920x1080,6,gmflow,T,gmflow_with_refine_sintel-3ed1cf48,gmflow__gmflow_with_refine_sintel-3ed1cf48__1920x1080,1.996473,1.815535,2.191776,1.304593,1.201952,1.413923,1
+1920x1080,7,raft,C,raft-sintel,raft__raft-sintel__1920x1080,2.047355,1.861018,2.244462,1.175558,1.072391,1.286588,1
+1920x1080,8,waft,C,tar-c-t,waft__tar-c-t__1920x1080,2.085645,1.901482,2.281497,1.195411,1.090898,1.309255,1
+1920x1080,9,flownet2,P,FlowNet2_checkpoint,flownet2__FlowNet2_checkpoint__1920x1080,3.136410,2.807163,3.484012,1.177696,1.074173,1.289371,0
+1920x1080,10,arflow,E,KITTI15/pwclite_ar,arflow__KITTI15-pwclite_ar__1920x1080,3.175035,2.724817,3.673018,1.584823,1.400776,1.782635,0
+1920x1080,11,liteflownet3,P,liteflownet3-sintel,liteflownet3__liteflownet3-sintel__1920x1080,3.274702,2.898217,3.671529,1.219456,1.116948,1.329856,1
+1920x1080,12,vcn,P,vcn_weights/chairs/finetune_141999,vcn__vcn_weights-chairs-finetune_141999__1920x1080,3.829213,3.436208,4.242788,1.219747,1.116025,1.331198,0
+1920x1080,13,pyflow,P,fast,pyflow__fast__1920x1080,4.050923,3.400328,4.761644,1.195566,1.094579,1.302632,0
+1920x1080,14,pwcnet,P,pwc_net,pwcnet__pwc_net__1920x1080,4.404227,3.972452,4.862756,1.215491,1.112605,1.326628,0
+1920x1080,15,fastflownet,E,fastflownet_ft_kitti,fastflownet__fastflownet_ft_kitti__1920x1080,4.425315,3.917142,4.968698,2.491047,2.169490,2.828314,0
+1920x1080,16,flowdiffusion,M,pipeline-305000,flowdiffusion__pipeline-305000__1920x1080,5.124861,4.653550,5.615790,1.418175,1.320705,1.521242,0
+1920x1080,ref,zeroflow,-,zero flow,zeroflow__zero_flow__1920x1080,7.549185,6.979870,8.126786,2.065328,1.970760,2.160930,0

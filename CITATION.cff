@@ -1,0 +1,31 @@
+cff-version: 1.2.0
+message: "If you use this code or the FlyingDrones dataset, please cite the paper below."
+title: "FlyingDrones: A Dataset and Benchmark for Optical Flow Estimation from UAV motion"
+type: software
+authors:
+  - given-names: Laurenz
+    family-names: Ruzicka
+  - given-names: Roman
+    family-names: Pflugfelder
+  - given-names: Daniel
+    family-names: Cremers
+license: CC-BY-NC-ND-4.0
+url: "https://www.kaggle.com/datasets/flyingdrones/flyingdrones"
+identifiers:
+  - type: url
+    value: "https://www.kaggle.com/datasets/flyingdrones/flyingdrones"
+    description: "FlyingDrones dataset on Kaggle"
+# TODO: add repository-code (GitHub URL), version and date-released once known.
+preferred-citation:
+  type: conference-paper
+  title: "FlyingDrones: A Dataset and Benchmark for Optical Flow Estimation from UAV motion"
+  authors:
+    - given-names: Laurenz
+      family-names: Ruzicka
+    - given-names: Roman
+      family-names: Pflugfelder
+    - given-names: Daniel
+      family-names: Cremers
+  collection-title: "Advances in Neural Information Processing Systems (NeurIPS)"
+  year: 2026
+  # TODO: add url (and doi, if any) of the paper once it is published after the conference.

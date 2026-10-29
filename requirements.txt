@@ -1,0 +1,3 @@
+numpy
+Pillow
+# optional: opencv-python (cv2 image resize, real_footage/), torch (tests, evaluators), scipy (tables/build_extras.py), pytest

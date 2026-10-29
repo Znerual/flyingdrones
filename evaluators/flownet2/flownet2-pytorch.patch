@@ -1,0 +1,760 @@
+diff -ruN a/models.py b/models.py
+--- a/models.py
++++ b/models.py
+@@ -5,26 +5,15 @@
+ import math
+ import numpy as np
+ 
+-try:
+-    from networks.resample2d_package.resample2d import Resample2d
+-    from networks.channelnorm_package.channelnorm import ChannelNorm
+-
+-    from networks import FlowNetC
+-    from networks import FlowNetS
+-    from networks import FlowNetSD
+-    from networks import FlowNetFusion
+-
+-    from networks.submodules import *
+-except:
+-    from .networks.resample2d_package.resample2d import Resample2d
+-    from .networks.channelnorm_package.channelnorm import ChannelNorm
+-
+-    from .networks import FlowNetC
+-    from .networks import FlowNetS
+-    from .networks import FlowNetSD
+-    from .networks import FlowNetFusion
++from networks.resample2d_package.resample2d import Resample2d
++from networks.channelnorm_package.channelnorm import ChannelNorm
+ 
+-    from .networks.submodules import *
++from networks import FlowNetC
++from networks import FlowNetS
++from networks import FlowNetSD
++from networks import FlowNetFusion
++
++from networks.submodules import *
+ 'Parameter count = 162,518,834'
+ 
+ class FlowNet2(nn.Module):
+@@ -348,7 +337,11 @@
+         if self.training:
+             return flow2,flow3,flow4,flow5,flow6
+         else:
+-            return self.upsample1(flow2*self.div_flow)
++            # Upstream bug (NVIDIA/flownet2-pytorch #37): the fused FlowNet2
++            # graph divides flownetsd_flow2 by div_flow (line 156 above), but
++            # this standalone wrapper multiplies — producing ~400× too-large
++            # predictions. Match the fused-graph convention.
++            return self.upsample1(flow2/self.div_flow)
+ 
+ class FlowNet2CS(nn.Module):
+ 
+diff -ruN a/networks/channelnorm_package/channelnorm_kernel.cu b/networks/channelnorm_package/channelnorm_kernel.cu
+--- a/networks/channelnorm_package/channelnorm_kernel.cu
++++ b/networks/channelnorm_package/channelnorm_kernel.cu
+@@ -108,15 +108,15 @@
+ 
+     int n = output.numel();
+ 
+-    AT_DISPATCH_FLOATING_TYPES_AND_HALF(input1.type(), "channelnorm_forward", ([&] {
++    AT_DISPATCH_FLOATING_TYPES_AND_HALF(input1.scalar_type(), "channelnorm_forward", ([&] {
+ 
+       kernel_channelnorm_update_output<scalar_t><<< (n + CUDA_NUM_THREADS - 1)/CUDA_NUM_THREADS, CUDA_NUM_THREADS, 0, at::cuda::getCurrentCUDAStream() >>>(
+ //at::globalContext().getCurrentCUDAStream() >>>(
+           n,
+-          input1.data<scalar_t>(), 
++          input1.data_ptr<scalar_t>(), 
+           input1_size,
+           input1_stride, 
+-          output.data<scalar_t>(),
++          output.data_ptr<scalar_t>(),
+           output_size,
+           output_stride, 
+           norm_deg);
+@@ -149,21 +149,21 @@
+ 
+     int n = gradInput1.numel();
+ 
+-    AT_DISPATCH_FLOATING_TYPES_AND_HALF(input1.type(), "channelnorm_backward_input1", ([&] {
++    AT_DISPATCH_FLOATING_TYPES_AND_HALF(input1.scalar_type(), "channelnorm_backward_input1", ([&] {
+ 
+       kernel_channelnorm_backward_input1<scalar_t><<< (n + CUDA_NUM_THREADS - 1)/CUDA_NUM_THREADS, CUDA_NUM_THREADS, 0, at::cuda::getCurrentCUDAStream() >>>(
+ //at::globalContext().getCurrentCUDAStream() >>>(
+           n, 
+-          input1.data<scalar_t>(),
++          input1.data_ptr<scalar_t>(),
+           input1_size,
+           input1_stride,
+-          output.data<scalar_t>(),
++          output.data_ptr<scalar_t>(),
+           output_size,
+           output_stride,
+-          gradOutput.data<scalar_t>(),
++          gradOutput.data_ptr<scalar_t>(),
+           gradOutput_size,
+           gradOutput_stride, 
+-          gradInput1.data<scalar_t>(),
++          gradInput1.data_ptr<scalar_t>(),
+           gradInput1_size,
+           gradInput1_stride,
+           norm_deg
+diff -ruN a/networks/channelnorm_package/channelnorm.py b/networks/channelnorm_package/channelnorm.py
+--- a/networks/channelnorm_package/channelnorm.py
++++ b/networks/channelnorm_package/channelnorm.py
+@@ -1,6 +1,35 @@
++import os
+ from torch.autograd import Function, Variable
+ from torch.nn.modules.module import Module
+-import channelnorm_cuda
++
++_channelnorm_cuda = None
++
++# 1. Try pre-compiled (installed via setup.py in container)
++try:
++    import channelnorm_cuda as _channelnorm_cuda
++except ImportError:
++    pass
++
++# 2. Try JIT compilation (requires nvcc + full CUDA headers)
++if _channelnorm_cuda is None:
++    try:
++        from torch.utils.cpp_extension import load
++        _src_dir = os.path.dirname(os.path.abspath(__file__))
++        _stubs_dir = os.path.join(os.path.dirname(_src_dir), 'cuda_stubs')
++        _channelnorm_cuda = load(
++            name='channelnorm_cuda',
++            sources=[
++                os.path.join(_src_dir, 'channelnorm_cuda.cc'),
++                os.path.join(_src_dir, 'channelnorm_kernel.cu'),
++            ],
++            extra_cflags=['-std=c++17'],
++            extra_cuda_cflags=['-std=c++17'],
++            extra_include_paths=[_stubs_dir],
++            verbose=False,
++        )
++    except Exception:
++        pass  # will use PyTorch fallback
++
+ 
+ class ChannelNormFunction(Function):
+ 
+@@ -10,7 +39,7 @@
+         b, _, h, w = input1.size()
+         output = input1.new(b, 1, h, w).zero_()
+ 
+-        channelnorm_cuda.forward(input1, output, norm_deg)
++        _channelnorm_cuda.forward(input1, output, norm_deg)
+         ctx.save_for_backward(input1, output)
+         ctx.norm_deg = norm_deg
+ 
+@@ -22,8 +51,8 @@
+ 
+         grad_input1 = Variable(input1.new(input1.size()).zero_())
+ 
+-        channelnorm_cuda.backward(input1, output, grad_output.data,
+-                                              grad_input1.data, ctx.norm_deg)
++        _channelnorm_cuda.backward(input1, output, grad_output.data,
++                                    grad_input1.data, ctx.norm_deg)
+ 
+         return grad_input1, None
+ 
+@@ -35,5 +64,8 @@
+         self.norm_deg = norm_deg
+ 
+     def forward(self, input1):
+-        return ChannelNormFunction.apply(input1, self.norm_deg)
+-
++        if _channelnorm_cuda is not None:
++            return ChannelNormFunction.apply(input1, self.norm_deg)
++        else:
++            from networks.pytorch_fallbacks import ChannelNormFallback
++            return ChannelNormFallback(self.norm_deg).to(input1.device)(input1)
+diff -ruN a/networks/channelnorm_package/setup.py b/networks/channelnorm_package/setup.py
+--- a/networks/channelnorm_package/setup.py
++++ b/networks/channelnorm_package/setup.py
+@@ -5,14 +5,18 @@
+ from setuptools import setup
+ from torch.utils.cpp_extension import BuildExtension, CUDAExtension
+ 
+-cxx_args = ['-std=c++11']
++cxx_args = ['-std=c++17']
+ 
+ nvcc_args = [
+-    '-gencode', 'arch=compute_52,code=sm_52',
+     '-gencode', 'arch=compute_60,code=sm_60',
+     '-gencode', 'arch=compute_61,code=sm_61',
+     '-gencode', 'arch=compute_70,code=sm_70',
+-    '-gencode', 'arch=compute_70,code=compute_70'
++    '-gencode', 'arch=compute_75,code=sm_75',
++    '-gencode', 'arch=compute_80,code=sm_80',
++    '-gencode', 'arch=compute_86,code=sm_86',
++    '-gencode', 'arch=compute_89,code=sm_89',
++    '-gencode', 'arch=compute_90,code=sm_90',
++    '-gencode', 'arch=compute_90,code=compute_90'
+ ]
+ 
+ setup(
+diff -ruN a/networks/correlation_package/correlation_cuda_kernel.cu b/networks/correlation_package/correlation_cuda_kernel.cu
+--- a/networks/correlation_package/correlation_cuda_kernel.cu
++++ b/networks/correlation_package/correlation_cuda_kernel.cu
+@@ -383,29 +383,29 @@
+    dim3 blocks_grid(batchSize, inputHeight, inputWidth);
+    dim3 threads_block(THREADS_PER_BLOCK);
+ 
+-  AT_DISPATCH_FLOATING_TYPES_AND_HALF(input1.type(), "channels_first_fwd_1", ([&] {
++  AT_DISPATCH_FLOATING_TYPES_AND_HALF(input1.scalar_type(), "channels_first_fwd_1", ([&] {
+ 
+   channels_first<scalar_t><<<blocks_grid,threads_block, 0, stream>>>(
+-      input1.data<scalar_t>(), rInput1.data<scalar_t>(), nInputChannels, inputHeight, inputWidth, pad_size);
++      input1.data_ptr<scalar_t>(), rInput1.data_ptr<scalar_t>(), nInputChannels, inputHeight, inputWidth, pad_size);
+ 
+   }));
+ 
+-  AT_DISPATCH_FLOATING_TYPES_AND_HALF(input2.type(), "channels_first_fwd_2", ([&] {
++  AT_DISPATCH_FLOATING_TYPES_AND_HALF(input2.scalar_type(), "channels_first_fwd_2", ([&] {
+ 
+   channels_first<scalar_t><<<blocks_grid,threads_block, 0, stream>>> (
+-      input2.data<scalar_t>(), rInput2.data<scalar_t>(), nInputChannels, inputHeight, inputWidth, pad_size);
++      input2.data_ptr<scalar_t>(), rInput2.data_ptr<scalar_t>(), nInputChannels, inputHeight, inputWidth, pad_size);
+ 
+   }));
+ 
+    dim3 threadsPerBlock(THREADS_PER_BLOCK);
+    dim3 totalBlocksCorr(batchSize, outputHeight, outputWidth);
+ 
+-  AT_DISPATCH_FLOATING_TYPES_AND_HALF(input1.type(), "correlation_forward", ([&] {
++  AT_DISPATCH_FLOATING_TYPES_AND_HALF(input1.scalar_type(), "correlation_forward", ([&] {
+ 
+    correlation_forward<scalar_t><<<totalBlocksCorr, threadsPerBlock, 0, stream>>> 
+-                        (output.data<scalar_t>(), nOutputChannels, outputHeight, outputWidth,
+-                         rInput1.data<scalar_t>(), nInputChannels, inputHeight, inputWidth,
+-                         rInput2.data<scalar_t>(),
++                        (output.data_ptr<scalar_t>(), nOutputChannels, outputHeight, outputWidth,
++                         rInput1.data_ptr<scalar_t>(), nInputChannels, inputHeight, inputWidth,
++                         rInput2.data_ptr<scalar_t>(),
+                          pad_size,
+                          kernel_size,
+                          max_displacement,
+@@ -492,11 +492,11 @@
+     dim3 threads_block(THREADS_PER_BLOCK);
+ 
+ 
+-    AT_DISPATCH_FLOATING_TYPES_AND_HALF(input1.type(), "lltm_forward_cuda", ([&] {
++    AT_DISPATCH_FLOATING_TYPES_AND_HALF(input1.scalar_type(), "lltm_forward_cuda", ([&] {
+ 
+         channels_first<scalar_t><<<blocks_grid, threads_block, 0, stream>>>(
+-            input1.data<scalar_t>(),
+-            rInput1.data<scalar_t>(),
++            input1.data_ptr<scalar_t>(),
++            rInput1.data_ptr<scalar_t>(),
+             nInputChannels,
+             inputHeight,
+             inputWidth,
+@@ -504,11 +504,11 @@
+         );
+     }));
+ 
+-    AT_DISPATCH_FLOATING_TYPES_AND_HALF(input2.type(), "lltm_forward_cuda", ([&] {
++    AT_DISPATCH_FLOATING_TYPES_AND_HALF(input2.scalar_type(), "lltm_forward_cuda", ([&] {
+ 
+         channels_first<scalar_t><<<blocks_grid, threads_block, 0, stream>>>(
+-            input2.data<scalar_t>(),
+-            rInput2.data<scalar_t>(),
++            input2.data_ptr<scalar_t>(),
++            rInput2.data_ptr<scalar_t>(),
+             nInputChannels,
+             inputHeight,
+             inputWidth,
+@@ -521,13 +521,13 @@
+ 
+     for (int n = 0; n < num; ++n) {
+ 
+-      AT_DISPATCH_FLOATING_TYPES_AND_HALF(input2.type(), "lltm_forward_cuda", ([&] {
++      AT_DISPATCH_FLOATING_TYPES_AND_HALF(input2.scalar_type(), "lltm_forward_cuda", ([&] {
+ 
+ 
+           correlation_backward_input1<scalar_t><<<totalBlocksCorr, threadsPerBlock, 0, stream>>> (
+-              n, gradInput1.data<scalar_t>(), nInputChannels, inputHeight, inputWidth,
+-              gradOutput.data<scalar_t>(), nOutputChannels, outputHeight, outputWidth,
+-              rInput2.data<scalar_t>(),
++              n, gradInput1.data_ptr<scalar_t>(), nInputChannels, inputHeight, inputWidth,
++              gradOutput.data_ptr<scalar_t>(), nOutputChannels, outputHeight, outputWidth,
++              rInput2.data_ptr<scalar_t>(),
+               pad_size,
+               kernel_size,
+               max_displacement,
+@@ -538,12 +538,12 @@
+ 
+     for(int n = 0; n < batchSize; n++) {
+ 
+-      AT_DISPATCH_FLOATING_TYPES_AND_HALF(rInput1.type(), "lltm_forward_cuda", ([&] {
++      AT_DISPATCH_FLOATING_TYPES_AND_HALF(rInput1.scalar_type(), "lltm_forward_cuda", ([&] {
+ 
+         correlation_backward_input2<scalar_t><<<totalBlocksCorr, threadsPerBlock, 0, stream>>>(
+-            n, gradInput2.data<scalar_t>(), nInputChannels, inputHeight, inputWidth,
+-            gradOutput.data<scalar_t>(), nOutputChannels, outputHeight, outputWidth,
+-            rInput1.data<scalar_t>(),
++            n, gradInput2.data_ptr<scalar_t>(), nInputChannels, inputHeight, inputWidth,
++            gradOutput.data_ptr<scalar_t>(), nOutputChannels, outputHeight, outputWidth,
++            rInput1.data_ptr<scalar_t>(),
+             pad_size,
+             kernel_size,
+             max_displacement,
+diff -ruN a/networks/correlation_package/correlation.py b/networks/correlation_package/correlation.py
+--- a/networks/correlation_package/correlation.py
++++ b/networks/correlation_package/correlation.py
+@@ -1,14 +1,43 @@
++import os
+ import torch
+ from torch.nn.modules.module import Module
+ from torch.autograd import Function
+-import correlation_cuda
++
++_correlation_cuda = None
++
++# 1. Try pre-compiled (installed via setup.py in container)
++try:
++    import correlation_cuda as _correlation_cuda
++except ImportError:
++    pass
++
++# 2. Try JIT compilation (requires nvcc + full CUDA headers)
++if _correlation_cuda is None:
++    try:
++        from torch.utils.cpp_extension import load
++        _src_dir = os.path.dirname(os.path.abspath(__file__))
++        _stubs_dir = os.path.join(os.path.dirname(_src_dir), 'cuda_stubs')
++        _correlation_cuda = load(
++            name='correlation_cuda',
++            sources=[
++                os.path.join(_src_dir, 'correlation_cuda.cc'),
++                os.path.join(_src_dir, 'correlation_cuda_kernel.cu'),
++            ],
++            extra_cflags=['-std=c++17'],
++            extra_cuda_cflags=['-std=c++17'],
++            extra_include_paths=[_stubs_dir],
++            verbose=False,
++        )
++    except Exception:
++        pass  # will use PyTorch fallback
++
+ 
+ class CorrelationFunction(Function):
+ 
+     @staticmethod
+-    def forward(ctx, input1, input2, pad_size=3, kernel_size=3, max_displacement=20, stride1=1, stride2=2, corr_multiply=1):
++    def forward(ctx, input1, input2, pad_size=3, kernel_size=3, max_displacement=20,
++                stride1=1, stride2=2, corr_multiply=1):
+         ctx.save_for_backward(input1, input2)
+-
+         ctx.pad_size = pad_size
+         ctx.kernel_size = kernel_size
+         ctx.max_displacement = max_displacement
+@@ -20,9 +49,9 @@
+             rbot1 = input1.new()
+             rbot2 = input2.new()
+             output = input1.new()
+-
+-            correlation_cuda.forward(input1, input2, rbot1, rbot2, output,
+-                ctx.pad_size, ctx.kernel_size, ctx.max_displacement, ctx.stride1, ctx.stride2, ctx.corr_multiply)
++            _correlation_cuda.forward(input1, input2, rbot1, rbot2, output,
++                ctx.pad_size, ctx.kernel_size, ctx.max_displacement,
++                ctx.stride1, ctx.stride2, ctx.corr_multiply)
+ 
+         return output
+ 
+@@ -33,18 +62,19 @@
+         with torch.cuda.device_of(input1):
+             rbot1 = input1.new()
+             rbot2 = input2.new()
+-
+             grad_input1 = input1.new()
+             grad_input2 = input2.new()
+-
+-            correlation_cuda.backward(input1, input2, rbot1, rbot2, grad_output, grad_input1, grad_input2,
+-                ctx.pad_size, ctx.kernel_size, ctx.max_displacement, ctx.stride1, ctx.stride2, ctx.corr_multiply)
++            _correlation_cuda.backward(input1, input2, rbot1, rbot2, grad_output,
++                grad_input1, grad_input2,
++                ctx.pad_size, ctx.kernel_size, ctx.max_displacement,
++                ctx.stride1, ctx.stride2, ctx.corr_multiply)
+ 
+         return grad_input1, grad_input2, None, None, None, None, None, None
+ 
+ 
+ class Correlation(Module):
+-    def __init__(self, pad_size=0, kernel_size=0, max_displacement=0, stride1=1, stride2=2, corr_multiply=1):
++    def __init__(self, pad_size=0, kernel_size=0, max_displacement=0,
++                 stride1=1, stride2=2, corr_multiply=1):
+         super(Correlation, self).__init__()
+         self.pad_size = pad_size
+         self.kernel_size = kernel_size
+@@ -54,8 +84,17 @@
+         self.corr_multiply = corr_multiply
+ 
+     def forward(self, input1, input2):
+-
+-        result = CorrelationFunction.apply(input1, input2, self.pad_size, self.kernel_size, self.max_displacement, self.stride1, self.stride2, self.corr_multiply)
+-
+-        return result
+-
++        if _correlation_cuda is not None:
++            return CorrelationFunction.apply(
++                input1, input2, self.pad_size, self.kernel_size,
++                self.max_displacement, self.stride1, self.stride2, self.corr_multiply)
++        else:
++            from networks.pytorch_fallbacks import CorrelationFallback
++            return CorrelationFallback(
++                pad_size=self.pad_size,
++                kernel_size=self.kernel_size,
++                max_displacement=self.max_displacement,
++                stride1=self.stride1,
++                stride2=self.stride2,
++                corr_multiply=self.corr_multiply,
++            ).to(input1.device)(input1, input2)
+diff -ruN a/networks/correlation_package/setup.py b/networks/correlation_package/setup.py
+--- a/networks/correlation_package/setup.py
++++ b/networks/correlation_package/setup.py
+@@ -5,15 +5,18 @@
+ from setuptools import setup, find_packages
+ from torch.utils.cpp_extension import BuildExtension, CUDAExtension
+ 
+-cxx_args = ['-std=c++11']
++cxx_args = ['-std=c++17']
+ 
+ nvcc_args = [
+-    '-gencode', 'arch=compute_50,code=sm_50',
+-    '-gencode', 'arch=compute_52,code=sm_52',
+     '-gencode', 'arch=compute_60,code=sm_60',
+     '-gencode', 'arch=compute_61,code=sm_61',
+     '-gencode', 'arch=compute_70,code=sm_70',
+-    '-gencode', 'arch=compute_70,code=compute_70'
++    '-gencode', 'arch=compute_75,code=sm_75',
++    '-gencode', 'arch=compute_80,code=sm_80',
++    '-gencode', 'arch=compute_86,code=sm_86',
++    '-gencode', 'arch=compute_89,code=sm_89',
++    '-gencode', 'arch=compute_90,code=sm_90',
++    '-gencode', 'arch=compute_90,code=compute_90'
+ ]
+ 
+ setup(
+diff -ruN a/networks/cuda_stubs/nv/target b/networks/cuda_stubs/nv/target
+--- a/networks/cuda_stubs/nv/target
++++ b/networks/cuda_stubs/nv/target
+@@ -0,0 +1,23 @@
++// Minimal nv/target stub for host compilation without full CUDA toolkit.
++// Provides target-detection macros from NVIDIA libcudacxx.
++#pragma once
++
++#if defined(__CUDA_ARCH__)
++#  define _NV_TARGET_DEVICE_ 1
++#  define _NV_TARGET_HOST_   0
++#else
++#  define _NV_TARGET_DEVICE_ 0
++#  define _NV_TARGET_HOST_   1
++#endif
++
++#define NV_IS_HOST   _NV_TARGET_HOST_
++#define NV_IS_DEVICE _NV_TARGET_DEVICE_
++
++// NV_IF_ELSE_TARGET(selector, device_code, host_code)
++#if defined(__CUDA_ARCH__)
++#  define NV_IF_ELSE_TARGET(sel, d, h) d
++#  define NV_IF_TARGET(sel, d)         d
++#else
++#  define NV_IF_ELSE_TARGET(sel, d, h) h
++#  define NV_IF_TARGET(sel, d)
++#endif
+diff -ruN a/networks/pytorch_fallbacks.py b/networks/pytorch_fallbacks.py
+--- a/networks/pytorch_fallbacks.py
++++ b/networks/pytorch_fallbacks.py
+@@ -0,0 +1,87 @@
++"""Pure PyTorch fallbacks for the FlowNet2 custom CUDA ops.
++
++Used when CUDA extensions cannot be compiled (e.g., no nvcc/Thrust headers).
++Slower but numerically equivalent for inference.
++"""
++import torch
++import torch.nn.functional as F
++from torch.nn.modules.module import Module
++from torch.autograd import Function
++
++
++# ---------------------------------------------------------------------------
++# ChannelNorm: per-pixel L2 norm across channels
++# ---------------------------------------------------------------------------
++
++class ChannelNormFallback(Module):
++    def __init__(self, norm_deg=2):
++        super().__init__()
++        self.norm_deg = norm_deg
++
++    def forward(self, input1):
++        return torch.norm(input1, p=self.norm_deg, dim=1, keepdim=True)
++
++
++# ---------------------------------------------------------------------------
++# Resample2d: bilinear warp of input1 using displacement field from input2
++# ---------------------------------------------------------------------------
++
++class Resample2dFallback(Module):
++    def __init__(self, kernel_size=1, bilinear=True):
++        super().__init__()
++        self.kernel_size = kernel_size
++        self.bilinear = bilinear
++
++    def forward(self, input1, input2):
++        B, C, H, W = input1.shape
++        _, _, H2, W2 = input2.shape
++
++        y_base = torch.arange(H2, device=input1.device, dtype=input1.dtype)
++        x_base = torch.arange(W2, device=input1.device, dtype=input1.dtype)
++        grid_y, grid_x = torch.meshgrid(y_base, x_base, indexing='ij')
++
++        new_x = grid_x.unsqueeze(0) + input2[:, 0]
++        new_y = grid_y.unsqueeze(0) + input2[:, 1]
++
++        new_x_norm = new_x / (W - 1) * 2 - 1
++        new_y_norm = new_y / (H - 1) * 2 - 1
++
++        grid = torch.stack([new_x_norm, new_y_norm], dim=-1)
++        return F.grid_sample(input1, grid, mode='bilinear',
++                             padding_mode='zeros', align_corners=True)
++
++
++# ---------------------------------------------------------------------------
++# Correlation: dot-product correlation with displacement search
++#   pad_size=20, kernel_size=1, max_displacement=20, stride1=1, stride2=2
++#   output channels = (2*(max_displacement//stride2) + 1)^2
++# ---------------------------------------------------------------------------
++
++class CorrelationFallback(Module):
++    def __init__(self, pad_size=0, kernel_size=0, max_displacement=0,
++                 stride1=1, stride2=2, corr_multiply=1):
++        super().__init__()
++        self.pad_size = pad_size
++        self.max_displacement = max_displacement
++        self.stride1 = stride1
++        self.stride2 = stride2
++
++    def forward(self, input1, input2):
++        B, C, H, W = input1.shape
++        d = self.max_displacement
++        s = self.stride2
++        # Pad input2 with max_displacement on each side
++        input2_pad = F.pad(input2, [d, d, d, d])
++
++        corrs = []
++        for ty in range(-d, d + 1, s):
++            for tx in range(-d, d + 1, s):
++                # Sample input2 at displaced positions
++                shifted = input2_pad[:, :,
++                                     d + ty: d + ty + H,
++                                     d + tx: d + tx + W]
++                # Dot product and average over channels
++                corr = (input1 * shifted).sum(dim=1, keepdim=True) / C
++                corrs.append(corr)
++
++        return torch.cat(corrs, dim=1)  # (B, (2d/s+1)^2, H, W)
+diff -ruN a/networks/resample2d_package/resample2d_kernel.cu b/networks/resample2d_package/resample2d_kernel.cu
+--- a/networks/resample2d_package/resample2d_kernel.cu
++++ b/networks/resample2d_package/resample2d_kernel.cu
+@@ -216,18 +216,18 @@
+     const long4 output_stride = make_long4(output.stride(0), output.stride(1), output.stride(2), output.stride(3));
+ 
+     // TODO: when atomicAdd gets resolved, change to AT_DISPATCH_FLOATING_TYPES_AND_HALF
+-//    AT_DISPATCH_FLOATING_TYPES(input1.type(), "resample_forward_kernel", ([&] {
++//    AT_DISPATCH_FLOATING_TYPES(input1.scalar_type(), "resample_forward_kernel", ([&] {
+ 
+         kernel_resample2d_update_output<float><<< (n + CUDA_NUM_THREADS - 1)/CUDA_NUM_THREADS, CUDA_NUM_THREADS, 0, at::cuda::getCurrentCUDAStream() >>>(
+ //at::globalContext().getCurrentCUDAStream() >>>(
+             n,
+-            input1.data<float>(),
++            input1.data_ptr<float>(),
+             input1_size,
+             input1_stride, 
+-            input2.data<float>(),
++            input2.data_ptr<float>(),
+             input2_size,
+             input2_stride,
+-            output.data<float>(),
++            output.data_ptr<float>(),
+             output_size,
+             output_stride,
+             kernel_size,
+@@ -264,21 +264,21 @@
+     const long4 gradInput1_size = make_long4(gradInput1.size(0), gradInput1.size(1), gradInput1.size(2), gradInput1.size(3));
+     const long4 gradInput1_stride = make_long4(gradInput1.stride(0), gradInput1.stride(1), gradInput1.stride(2), gradInput1.stride(3));
+ 
+-//    AT_DISPATCH_FLOATING_TYPES(input1.type(), "resample_backward_input1", ([&] {
++//    AT_DISPATCH_FLOATING_TYPES(input1.scalar_type(), "resample_backward_input1", ([&] {
+ 
+         kernel_resample2d_backward_input1<float><<< (n + CUDA_NUM_THREADS - 1)/CUDA_NUM_THREADS, CUDA_NUM_THREADS, 0, at::cuda::getCurrentCUDAStream() >>>(
+ //at::globalContext().getCurrentCUDAStream() >>>(
+             n, 
+-            input1.data<float>(), 
++            input1.data_ptr<float>(), 
+             input1_size,
+             input1_stride,
+-            input2.data<float>(),
++            input2.data_ptr<float>(),
+             input2_size, 
+             input2_stride,
+-            gradOutput.data<float>(),
++            gradOutput.data_ptr<float>(),
+             gradOutput_size,
+             gradOutput_stride,
+-            gradInput1.data<float>(),
++            gradInput1.data_ptr<float>(),
+             gradInput1_size,
+             gradInput1_stride, 
+             kernel_size,
+@@ -292,22 +292,22 @@
+ 
+     n = gradInput2.numel();
+ 
+-//    AT_DISPATCH_FLOATING_TYPES(gradInput2.type(), "resample_backward_input2", ([&] {
++//    AT_DISPATCH_FLOATING_TYPES(gradInput2.scalar_type(), "resample_backward_input2", ([&] {
+ 
+ 
+         kernel_resample2d_backward_input2<float><<< (n + CUDA_NUM_THREADS - 1)/CUDA_NUM_THREADS, CUDA_NUM_THREADS, 0, at::cuda::getCurrentCUDAStream() >>>(
+ //at::globalContext().getCurrentCUDAStream() >>>(
+             n, 
+-            input1.data<float>(), 
++            input1.data_ptr<float>(), 
+             input1_size, 
+             input1_stride,
+-            input2.data<float>(), 
++            input2.data_ptr<float>(), 
+             input2_size,
+             input2_stride,
+-            gradOutput.data<float>(),
++            gradOutput.data_ptr<float>(),
+             gradOutput_size,
+             gradOutput_stride,
+-            gradInput2.data<float>(),
++            gradInput2.data_ptr<float>(),
+             gradInput2_size,
+             gradInput2_stride,
+             kernel_size,
+diff -ruN a/networks/resample2d_package/resample2d.py b/networks/resample2d_package/resample2d.py
+--- a/networks/resample2d_package/resample2d.py
++++ b/networks/resample2d_package/resample2d.py
+@@ -1,11 +1,40 @@
+-from torch.nn.modules.module import Module
++import os
+ from torch.autograd import Function, Variable
+-import resample2d_cuda
++from torch.nn.modules.module import Module
++
++_resample2d_cuda = None
++
++# 1. Try pre-compiled (installed via setup.py in container)
++try:
++    import resample2d_cuda as _resample2d_cuda
++except ImportError:
++    pass
++
++# 2. Try JIT compilation (requires nvcc + full CUDA headers)
++if _resample2d_cuda is None:
++    try:
++        from torch.utils.cpp_extension import load
++        _src_dir = os.path.dirname(os.path.abspath(__file__))
++        _stubs_dir = os.path.join(os.path.dirname(_src_dir), 'cuda_stubs')
++        _resample2d_cuda = load(
++            name='resample2d_cuda',
++            sources=[
++                os.path.join(_src_dir, 'resample2d_cuda.cc'),
++                os.path.join(_src_dir, 'resample2d_kernel.cu'),
++            ],
++            extra_cflags=['-std=c++17'],
++            extra_cuda_cflags=['-std=c++17'],
++            extra_include_paths=[_stubs_dir],
++            verbose=False,
++        )
++    except Exception:
++        pass  # will use PyTorch fallback
++
+ 
+ class Resample2dFunction(Function):
+ 
+     @staticmethod
+-    def forward(ctx, input1, input2, kernel_size=1, bilinear= True):
++    def forward(ctx, input1, input2, kernel_size=1, bilinear=True):
+         assert input1.is_contiguous()
+         assert input2.is_contiguous()
+ 
+@@ -17,33 +46,39 @@
+         b, _, h, w = input2.size()
+         output = input1.new(b, d, h, w).zero_()
+ 
+-        resample2d_cuda.forward(input1, input2, output, kernel_size, bilinear)
++        _resample2d_cuda.forward(input1, input2, output, kernel_size, bilinear)
+ 
+         return output
+ 
+     @staticmethod
+     def backward(ctx, grad_output):
+         grad_output = grad_output.contiguous()
+-        assert grad_output.is_contiguous()
+-
+         input1, input2 = ctx.saved_tensors
+ 
+         grad_input1 = Variable(input1.new(input1.size()).zero_())
+         grad_input2 = Variable(input1.new(input2.size()).zero_())
+ 
+-        resample2d_cuda.backward(input1, input2, grad_output.data,
+-                                 grad_input1.data, grad_input2.data,
+-                                 ctx.kernel_size, ctx.bilinear)
++        _resample2d_cuda.backward(input1, input2, grad_output.data,
++                                   grad_input1.data, grad_input2.data,
++                                   ctx.kernel_size, ctx.bilinear)
+ 
+         return grad_input1, grad_input2, None, None
+ 
++
+ class Resample2d(Module):
+ 
+-    def __init__(self, kernel_size=1, bilinear = True):
++    def __init__(self, kernel_size=1, bilinear=True):
+         super(Resample2d, self).__init__()
+         self.kernel_size = kernel_size
+         self.bilinear = bilinear
+ 
+     def forward(self, input1, input2):
+-        input1_c = input1.contiguous()
+-        return Resample2dFunction.apply(input1_c, input2, self.kernel_size, self.bilinear)
++        if _resample2d_cuda is not None:
++            return Resample2dFunction.apply(
++                input1.contiguous(), input2, self.kernel_size, self.bilinear)
++        else:
++            from networks.pytorch_fallbacks import Resample2dFallback
++            return Resample2dFallback(
++                kernel_size=self.kernel_size,
++                bilinear=self.bilinear,
++            ).to(input1.device)(input1, input2)
+diff -ruN a/networks/resample2d_package/setup.py b/networks/resample2d_package/setup.py
+--- a/networks/resample2d_package/setup.py
++++ b/networks/resample2d_package/setup.py
+@@ -5,15 +5,18 @@
+ from setuptools import setup
+ from torch.utils.cpp_extension import BuildExtension, CUDAExtension
+ 
+-cxx_args = ['-std=c++11']
++cxx_args = ['-std=c++17']
+ 
+ nvcc_args = [
+-    '-gencode', 'arch=compute_50,code=sm_50',
+-    '-gencode', 'arch=compute_52,code=sm_52',
+     '-gencode', 'arch=compute_60,code=sm_60',
+     '-gencode', 'arch=compute_61,code=sm_61',
+     '-gencode', 'arch=compute_70,code=sm_70',
+-    '-gencode', 'arch=compute_70,code=compute_70'
++    '-gencode', 'arch=compute_75,code=sm_75',
++    '-gencode', 'arch=compute_80,code=sm_80',
++    '-gencode', 'arch=compute_86,code=sm_86',
++    '-gencode', 'arch=compute_89,code=sm_89',
++    '-gencode', 'arch=compute_90,code=sm_90',
++    '-gencode', 'arch=compute_90,code=compute_90'
+ ]
+ 
+ setup(

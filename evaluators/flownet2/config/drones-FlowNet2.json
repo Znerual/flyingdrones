@@ -1,0 +1,13 @@
+{
+    "name": "drones-FlowNet2",
+    "model": "FlowNet2",
+    "fp16": false,
+    "rgb_max": 255.0,
+    "image_size": [
+        432,
+        960
+    ],
+    "batch_size": 1,
+    "root": "datasets/AITSyntheticParsed",
+    "datasets_path": ""
+}

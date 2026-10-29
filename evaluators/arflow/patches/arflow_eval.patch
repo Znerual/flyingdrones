@@ -1,0 +1,96 @@
+diff --git a/models/pwclite.py b/models/pwclite.py
+index 7c21cae..36e47bd 100644
+--- a/models/pwclite.py
++++ b/models/pwclite.py
+@@ -3,8 +3,8 @@ import torch.nn as nn
+ import torch.nn.functional as F
+ 
+ from utils.warp_utils import flow_warp
+-from .correlation_package.correlation import Correlation
+-# from .correlation_native import Correlation
++# Use pure-PyTorch correlation to avoid CUDA extension compilation
++from .correlation_native import Correlation
+ 
+ def conv(in_planes, out_planes, kernel_size=3, stride=1, dilation=1, isReLU=True):
+     if isReLU:
+@@ -174,8 +174,12 @@ class PWCLite(nn.Module):
+             if l == 0:
+                 x2_warp = x2
+             else:
+-                flow = F.interpolate(flow * 2, scale_factor=2,
++                h_t, w_t = x2.shape[2], x2.shape[3]
++                h_s, w_s = flow.shape[2], flow.shape[3]
++                flow = F.interpolate(flow, size=(h_t, w_t),
+                                      mode='bilinear', align_corners=True)
++                flow[:, 0] = flow[:, 0] * (w_t / w_s)
++                flow[:, 1] = flow[:, 1] * (h_t / h_s)
+                 x2_warp = flow_warp(x2, flow)
+ 
+             # correlation
+@@ -197,8 +201,17 @@ class PWCLite(nn.Module):
+             if l == self.output_level:
+                 break
+         if self.upsample:
+-            flows = [F.interpolate(flow * 4, scale_factor=4,
+-                                   mode='bilinear', align_corners=True) for flow in flows]
++            h_out = x1_pyramid[-1].shape[2]
++            w_out = x1_pyramid[-1].shape[3]
++            new_flows = []
++            for flo in flows:
++                h_s, w_s = flo.shape[2], flo.shape[3]
++                flo_up = F.interpolate(flo, size=(h_out, w_out),
++                                       mode='bilinear', align_corners=True)
++                flo_up[:, 0] = flo_up[:, 0] * (w_out / w_s)
++                flo_up[:, 1] = flo_up[:, 1] * (h_out / h_s)
++                new_flows.append(flo_up)
++            flows = new_flows
+         return flows[::-1]
+ 
+     def forward_3_frames(self, x0_pyramid, x1_pyramid, x2_pyramid):
+@@ -218,8 +231,12 @@ class PWCLite(nn.Module):
+                 x0_warp = x0
+                 x2_warp = x2
+             else:
+-                flow = F.interpolate(flow * 2, scale_factor=2,
++                h_t, w_t = x1.shape[2], x1.shape[3]
++                h_s, w_s = flow.shape[2], flow.shape[3]
++                flow = F.interpolate(flow, size=(h_t, w_t),
+                                      mode='bilinear', align_corners=True)
++                flow[:, 0::2] = flow[:, 0::2] * (w_t / w_s)
++                flow[:, 1::2] = flow[:, 1::2] * (h_t / h_s)
+                 x0_warp = flow_warp(x0, flow[:, :2])
+                 x2_warp = flow_warp(x2, flow[:, 2:])
+ 
+@@ -248,8 +265,17 @@ class PWCLite(nn.Module):
+             if l == self.output_level:
+                 break
+         if self.upsample:
+-            flows = [F.interpolate(flow * 4, scale_factor=4,
+-                                   mode='bilinear', align_corners=True) for flow in flows]
++            h_out = x1_pyramid[-1].shape[2]
++            w_out = x1_pyramid[-1].shape[3]
++            new_flows = []
++            for flo in flows:
++                h_s, w_s = flo.shape[2], flo.shape[3]
++                flo_up = F.interpolate(flo, size=(h_out, w_out),
++                                       mode='bilinear', align_corners=True)
++                flo_up[:, 0::2] = flo_up[:, 0::2] * (w_out / w_s)
++                flo_up[:, 1::2] = flo_up[:, 1::2] * (h_out / h_s)
++                new_flows.append(flo_up)
++            flows = new_flows
+ 
+         flows_10 = [flo[:, :2] for flo in flows[::-1]]
+         flows_12 = [flo[:, 2:] for flo in flows[::-1]]
+diff --git a/utils/torch_utils.py b/utils/torch_utils.py
+index 680124d..70d5c99 100644
+--- a/utils/torch_utils.py
++++ b/utils/torch_utils.py
+@@ -25,7 +25,7 @@ def bias_parameters(module):
+ 
+ 
+ def load_checkpoint(model_path):
+-    weights = torch.load(model_path)
++    weights = torch.load(model_path, map_location='cpu', weights_only=False)
+     epoch = None
+     if 'epoch' in weights:
+         epoch = weights.pop('epoch')

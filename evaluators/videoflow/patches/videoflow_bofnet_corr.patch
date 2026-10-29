@@ -1,0 +1,21 @@
+diff --git a/core/Networks/BOFNet/corr.py b/core/Networks/BOFNet/corr.py
+index ed65db1..70d5bee 100644
+--- a/core/Networks/BOFNet/corr.py
++++ b/core/Networks/BOFNet/corr.py
+@@ -4,14 +4,10 @@ import torch.nn.functional as F
+ import math
+ from ...utils.utils import bilinear_sampler, coords_grid
+ # from compute_sparse_correlation import compute_sparse_corr, compute_sparse_corr_torch, compute_sparse_corr_mink
+-import alt_cuda_corr
+-
+ try:
+     import alt_cuda_corr
+-except:
+-    # alt_cuda_corr is not compiled
+-    print("[!!alt_cuda_corr is not compiled!!]")
+-    pass
++except ImportError:
++    alt_cuda_corr = None
+ 
+ class DirectCorr(torch.autograd.Function):
+     @staticmethod

@@ -1,0 +1,78 @@
+diff --git a/local_diffusers/models/imagen_unet.py b/local_diffusers/models/imagen_unet.py
+index 622fabe..bb4e0b1 100644
+--- a/local_diffusers/models/imagen_unet.py
++++ b/local_diffusers/models/imagen_unet.py
+@@ -39,6 +39,11 @@ except ImportError:
+     print("FLASH ATTENTION2 not available")
+     FLASH_AVAILABLE = False
+ 
++# Neither third-party kernel is installed in our container, and upstream's fallback
++# path is naive O(N^2)-memory attention. torch >= 2.0 ships a fused implementation
++# that removes that wall without adding a dependency; see OriginAttention.forward.
++_SDPA = hasattr(torch.nn.functional, "scaled_dot_product_attention")
++
+ 
+ @dataclass
+ class UNet2DOutput(BaseOutput):
+@@ -469,14 +474,26 @@ class OriginAttention(nn.Module):
+     def forward(self, x):
+         B, N, C = x.shape
+         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
++        q, k, v = qkv[0], qkv[1], qkv[2]
++
++        if _SDPA:
++            # Fused attention: never materialises the N x N score matrix. That
++            # matrix is what caps DDVM's crop size when neither xformers nor
++            # flash-attn is installed -- at 448x960 the finest attended level is
++            # 112x240 = 26,880 tokens, so B x heads x N x N is tens of GiB and
++            # OOMs long before the rest of the UNet does. torch's SDPA picks a
++            # flash/mem-efficient kernel itself and needs no extra dependency.
++            # scale is passed explicitly rather than folding it into q, so the
++            # arithmetic matches the branch below exactly.
++            x = torch.nn.functional.scaled_dot_product_attention(
++                q, k, v, dropout_p=0.0, scale=self.scale)
++        else:
++            attn = (q * self.scale) @ k.transpose(-2, -1)
++            attn = attn.softmax(dim=-1)
++            attn = self.attn_drop(attn)
++            x = attn @ v
+ 
+-        q, k, v = qkv[0] * self.scale, qkv[1], qkv[2]
+-        attn = q @ k.transpose(-2, -1)
+-
+-        attn = attn.softmax(dim=-1)
+-        attn = self.attn_drop(attn)
+-
+-        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
++        x = x.transpose(1, 2).reshape(B, N, C)
+         x = self.proj(x)
+         x = self.proj_drop(x)
+         return x
+diff --git a/local_diffusers/models/platte_unet.py b/local_diffusers/models/platte_unet.py
+new file mode 100644
+index 0000000..ea9747d
+--- /dev/null
++++ b/local_diffusers/models/platte_unet.py
+@@ -0,0 +1,6 @@
++from diffusers.configuration_utils import ConfigMixin, register_to_config
++from diffusers.models.modeling_utils import ModelMixin
++
++from .imagen_unet import SRUnet256
++
++__all__ = ["SRUnet256", "ModelMixin", "ConfigMixin"]
+diff --git a/local_diffusers/pipelines/DDPM/pipeline_ddpm.py b/local_diffusers/pipelines/DDPM/pipeline_ddpm.py
+index 9376328..25367cd 100644
+--- a/local_diffusers/pipelines/DDPM/pipeline_ddpm.py
++++ b/local_diffusers/pipelines/DDPM/pipeline_ddpm.py
+@@ -17,7 +17,10 @@ from typing import List, Optional, Tuple, Union
+ 
+ import torch
+ 
+-from diffusers.utils import randn_tensor
++try:
++    from diffusers.utils import randn_tensor
++except ImportError:
++    from diffusers.utils.torch_utils import randn_tensor
+ from diffusers.pipelines.pipeline_utils import DiffusionPipeline, ImagePipelineOutput
+ 
+ 

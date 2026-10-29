@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flyingdrones"
+version = "1.0.0"
+description = "Dataset loader, metrics and splits for the FlyingDrones optical-flow benchmark"
+readme = "README.md"
+license = { text = "CC-BY-NC-ND-4.0" }
+requires-python = ">=3.8"
+authors = [
+  { name = "Laurenz Ruzicka" },
+  { name = "Roman Pflugfelder" },
+  { name = "Daniel Cremers" },
+]
+dependencies = ["numpy", "Pillow"]
+
+[project.optional-dependencies]
+cv2 = ["opencv-python"]          # read_image(..., resize="cv2_area"), real_footage/
+torch = ["torch"]                 # resize-equivalence tests, evaluators
+tables = ["scipy"]                # tables/build_extras.py
+test = ["pytest"]
+
+[tool.setuptools]
+packages = ["flyingdrones"]
+# splits/ lives at the repository root; use an editable install (pip install -e .)
+# so that flyingdrones.load_split_frames("stratified") finds it.
